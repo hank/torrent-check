@@ -68,6 +68,9 @@ typedef struct {
 	int errorsFound;
 } fileRecord;
 
+static int beStepOver(BYTE* benstr,int benstrLen,int benstrOffset);
+static int beParseInteger(BYTE* benstr,int benstrLen,int benstrOffset,INT64* longOut);
+
 // Extracts the integer
 // Returns the new offset into the input,
 // or -1 if unable to parse the input
@@ -356,6 +359,7 @@ int main(int argc,char* argv[]) {
 	char progressBuf[48];
 	char p64Buf1[32];
 	char p64Buf2[32];
+	int justLengthCheck = 0;
 	SHA_CTX sha1ctx;
 
 	// Check the build for a working hasher and correct word lengths
@@ -390,6 +394,8 @@ int main(int argc,char* argv[]) {
 			useCommaDot = ',';
 		} else if (strcmp(argv[i],"-d") == 0) {
 			useCommaDot = '.';
+		} else if (strcmp(argv[i],"-l") == 0) {
+			justLengthCheck = 1;
 		} else if (strcmp(argv[i],"-sha1") == 0) {
 			filterMode = 1;
 			if (i+1 < argc) {
@@ -706,88 +712,91 @@ int main(int argc,char* argv[]) {
 					errorsFoundThisFile++;
 				}
 			}
-			fileBytesRead = 0;
-			while(fileBytesRead < fileBytesExpected) {
-				if (fileBytesExpected - fileBytesRead < pieceLen - bytesRead) {
-					bytesToRead = fileBytesExpected - fileBytesRead;
-				} else {
-					bytesToRead = pieceLen - bytesRead;
-				}
-				if (fp != NULL) readLen = fread(pieceBuf+bytesRead,1,bytesToRead,fp);
-				else readLen = 0;
-				bytesRead += bytesToRead; fileBytesRead += bytesToRead;
-				if ((fp != NULL)&&(readLen != bytesToRead)) {	
-					backspaceProgressLine(&showProgressChars);
-					printf("Short read, got %i bytes, expected %i bytes at offset %s of %s\n",readLen,bytesToRead,print64(fileBytesRead,p64Buf1,useCommaDot),filePathActual);
-					errorsFound ++;
-					errorsFoundThisFile ++;
-				}
-				if (currentFile + 1 >= numFiles) lastFile = 1;
-				if ((bytesRead == pieceLen)||((lastFile==1)&&(fileBytesRead == fileBytesExpected))) {
-					
-				    if ((fp != NULL)&&(readLen == bytesToRead)) {	
-						SHAInit(&sha1ctx);
-						SHAUpdate(&sha1ctx,pieceBuf,bytesRead);
-						SHAFinal(sha1hash,&sha1ctx);
+			if(!justLengthCheck)
+			{
+				fileBytesRead = 0;
+				while(fileBytesRead < fileBytesExpected) {
+					if (fileBytesExpected - fileBytesRead < pieceLen - bytesRead) {
+						bytesToRead = fileBytesExpected - fileBytesRead;
+					} else {
+						bytesToRead = pieceLen - bytesRead;
 					}
-					totalBytesDone += bytesRead;
-					i = piecesDone * SHA1_LEN;
-
-					if ((fp == NULL)||(readLen != bytesToRead)) {
+					if (fp != NULL) readLen = fread(pieceBuf+bytesRead,1,bytesToRead,fp);
+					else readLen = 0;
+					bytesRead += bytesToRead; fileBytesRead += bytesToRead;
+					if ((fp != NULL)&&(readLen != bytesToRead)) {	
+						backspaceProgressLine(&showProgressChars);
+						printf("Short read, got %i bytes, expected %i bytes at offset %s of %s\n",readLen,bytesToRead,print64(fileBytesRead,p64Buf1,useCommaDot),filePathActual);
 						errorsFound ++;
 						errorsFoundThisFile ++;
-						thisPieceBad = 2;
-						for(i=firstFileThisPiece;i<=currentFile;i++) {
-							fileRecordList[i].errorsFound = errorsFoundThisFile;
-						}
-					} else if (memcmp(pieceList+i,sha1hash,SHA1_LEN) != 0) {
-						errorsFound ++;
-						errorsFoundThisFile ++;
-						thisPieceBad = 1;
-						for(i=firstFileThisPiece;i<=currentFile;i++) {
-							fileRecordList[i].errorsFound = errorsFoundThisFile;
-						}
 					}
-
-					if (thisPieceBad || showPieceDetail) {
-						backspaceProgressLine(&showProgressChars);
-						if ((showPieceDetail == 1)||(thisPieceBad == 1)) {
-							printf("piece %i computed SHA1 %02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n",piecesDone,
-								(int)sha1hash[0], (int)sha1hash[1], (int)sha1hash[2], (int)sha1hash[3],
-								(int)sha1hash[4], (int)sha1hash[5], (int)sha1hash[6], (int)sha1hash[7],
-								(int)sha1hash[8], (int)sha1hash[9], (int)sha1hash[10], (int)sha1hash[11],
-								(int)sha1hash[12], (int)sha1hash[13], (int)sha1hash[14], (int)sha1hash[15],
-								(int)sha1hash[16], (int)sha1hash[17], (int)sha1hash[18], (int)sha1hash[19]);
-									
-							printf("piece %i expected SHA1 %02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n",piecesDone,
-								(int)pieceList[i+0], (int)pieceList[i+1], (int)pieceList[i+2], (int)pieceList[i+3],
-								(int)pieceList[i+4], (int)pieceList[i+5], (int)pieceList[i+6], (int)pieceList[i+7],
-								(int)pieceList[i+8], (int)pieceList[i+9], (int)pieceList[i+10], (int)pieceList[i+11],
-								(int)pieceList[i+12], (int)pieceList[i+13], (int)pieceList[i+14], (int)pieceList[i+15],
-								(int)pieceList[i+16], (int)pieceList[i+17], (int)pieceList[i+18], (int)pieceList[i+19]);
+					if (currentFile + 1 >= numFiles) lastFile = 1;
+					if ((bytesRead == pieceLen)||((lastFile==1)&&(fileBytesRead == fileBytesExpected))) {
+						
+					    if ((fp != NULL)&&(readLen == bytesToRead)) {	
+							SHAInit(&sha1ctx);
+							SHAUpdate(&sha1ctx,pieceBuf,bytesRead);
+							SHAFinal(sha1hash,&sha1ctx);
 						}
-						printf("piece %i is files %i-%i, %s bytes, %s total bytes, %i error%s\n",piecesDone,firstFileThisPiece+1,currentFile+1,print64(bytesRead,p64Buf1,useCommaDot),print64(totalBytesDone,p64Buf2,useCommaDot),errorsFound,((errorsFound == 1)?"":"s"));
-						thisPieceBad = 0;
-					}
+						totalBytesDone += bytesRead;
+						i = piecesDone * SHA1_LEN;
 
-					for(i=firstFileThisPiece;i<currentFile;i++) {
-						backspaceProgressLine(&showProgressChars);
-						printf(useCommaDot?"%3i %-3s %13s %s\n":"%3i %-3s %11s %s\n",i+1,((fileRecordList[i].errorsFound == 0)?"ok":"BAD"),
-                                                    print64(fileRecordList[i].numBytes,p64Buf1,useCommaDot),fileRecordList[i].filePath);
-					}
+						if ((fp == NULL)||(readLen != bytesToRead)) {
+							errorsFound ++;
+							errorsFoundThisFile ++;
+							thisPieceBad = 2;
+							for(i=firstFileThisPiece;i<=currentFile;i++) {
+								fileRecordList[i].errorsFound = errorsFoundThisFile;
+							}
+						} else if (memcmp(pieceList+i,sha1hash,SHA1_LEN) != 0) {
+							errorsFound ++;
+							errorsFoundThisFile ++;
+							thisPieceBad = 1;
+							for(i=firstFileThisPiece;i<=currentFile;i++) {
+								fileRecordList[i].errorsFound = errorsFoundThisFile;
+							}
+						}
 
-					piecesDone ++;
-					firstFileThisPiece = currentFile;
-					bytesRead = 0;	
-					if (showProgressCount) {
-						backspaceProgressLine(&showProgressChars);
-						sprintf(progressBuf,"%3i %s %i/%i (%i%%) ",currentFile+1,((errorsFound == 0)?"ok":"BAD"),piecesDone,numPieces,100*piecesDone/numPieces);
-						showProgressChars = strlen(progressBuf);
-						fwrite(progressBuf,showProgressChars,1,stdout);
-						fflush(stdout);
+						if (thisPieceBad && showPieceDetail) {
+							backspaceProgressLine(&showProgressChars);
+							if ((showPieceDetail == 1)||(thisPieceBad == 1)) {
+								printf("piece %i computed SHA1 %02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n",piecesDone,
+									(int)sha1hash[0], (int)sha1hash[1], (int)sha1hash[2], (int)sha1hash[3],
+									(int)sha1hash[4], (int)sha1hash[5], (int)sha1hash[6], (int)sha1hash[7],
+									(int)sha1hash[8], (int)sha1hash[9], (int)sha1hash[10], (int)sha1hash[11],
+									(int)sha1hash[12], (int)sha1hash[13], (int)sha1hash[14], (int)sha1hash[15],
+									(int)sha1hash[16], (int)sha1hash[17], (int)sha1hash[18], (int)sha1hash[19]);
+										
+								printf("piece %i expected SHA1 %02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n",piecesDone,
+									(int)pieceList[i+0], (int)pieceList[i+1], (int)pieceList[i+2], (int)pieceList[i+3],
+									(int)pieceList[i+4], (int)pieceList[i+5], (int)pieceList[i+6], (int)pieceList[i+7],
+									(int)pieceList[i+8], (int)pieceList[i+9], (int)pieceList[i+10], (int)pieceList[i+11],
+									(int)pieceList[i+12], (int)pieceList[i+13], (int)pieceList[i+14], (int)pieceList[i+15],
+									(int)pieceList[i+16], (int)pieceList[i+17], (int)pieceList[i+18], (int)pieceList[i+19]);
+							}
+							printf("piece %i is files %i-%i, %s bytes, %s total bytes, %i error%s\n",piecesDone,firstFileThisPiece+1,currentFile+1,print64(bytesRead,p64Buf1,useCommaDot),print64(totalBytesDone,p64Buf2,useCommaDot),errorsFound,((errorsFound == 1)?"":"s"));
+							thisPieceBad = 0;
+						}
+
+						for(i=firstFileThisPiece;i<currentFile;i++) {
+							backspaceProgressLine(&showProgressChars);
+							printf(useCommaDot?"%3i %-3s %13s %s\n":"%3i %-3s %11s %s\n",i+1,((fileRecordList[i].errorsFound == 0)?"ok":"BAD"),
+							    print64(fileRecordList[i].numBytes,p64Buf1,useCommaDot),fileRecordList[i].filePath);
+						}
+
+						piecesDone ++;
+						firstFileThisPiece = currentFile;
+						bytesRead = 0;	
+						if (showProgressCount) {
+							backspaceProgressLine(&showProgressChars);
+							sprintf(progressBuf,"%3i %s %i/%i (%i%%) ",currentFile+1,((errorsFound == 0)?"ok":"BAD"),piecesDone,numPieces,100*piecesDone/numPieces);
+							showProgressChars = strlen(progressBuf);
+							fwrite(progressBuf,showProgressChars,1,stdout);
+							fflush(stdout);
+						}
 					}
 				}
-			}
+			} // !justLengthCheck
 			if (fp != NULL) fclose(fp); fp = NULL;
 			errorsFoundThisFile = 0;
 			currentFile ++;
@@ -852,7 +861,7 @@ int main(int argc,char* argv[]) {
 				thisPieceBad = 1;
 			}
 
-			if (thisPieceBad || showPieceDetail) {
+			if (thisPieceBad && showPieceDetail) {
 				backspaceProgressLine(&showProgressChars);
 				printf("piece %i computed SHA1 %02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n",piecesDone,
 					(int)sha1hash[0], (int)sha1hash[1], (int)sha1hash[2], (int)sha1hash[3],
